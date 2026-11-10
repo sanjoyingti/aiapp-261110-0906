@@ -338,53 +338,38 @@ private fun GithubTokenField(vm: ChatViewModel, onOpenCodespace: (String) -> Uni
 private fun AddOfflineModel(vm: ChatViewModel) {
     var link by remember { mutableStateOf("") }
     var error by remember { mutableStateOf<String?>(null) }
-    var token by remember { mutableStateOf(vm.hfToken()) }
-    var tokenNote by remember { mutableStateOf<String?>(null) }
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text("Add any custom Hugging Face model", style = MaterialTheme.typography.titleSmall)
-        Text(
-            "Paste a Hugging Face link to any LiteRT-LM model (.litertlm), for example from huggingface.co/litert-community.",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        OutlinedTextField(
-            value = link,
-            onValueChange = {
-                link = it
-                error = null
-            },
-            label = { Text("Hugging Face link") },
-            singleLine = true,
-            modifier = Modifier.fillMaxWidth(),
-        )
-        Button(onClick = {
-            error = vm.addOfflineModel(link)
-            if (error == null) link = ""
-        }, enabled = link.isNotBlank()) { Text("Add and download") }
-        error?.let { Text(it, style = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
-
-        OutlinedTextField(
-            value = token,
-            onValueChange = {
-                token = it
-                tokenNote = null
-            },
-            label = { Text("Hugging Face token (optional)") },
-            singleLine = true,
-            visualTransformation = PasswordVisualTransformation(),
-            modifier = Modifier.fillMaxWidth(),
-        )
-        Text(
-            "Not needed for any of the built-in ★ Free Unrestricted & Coder models above.",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        Row(verticalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-            Button(onClick = {
-                vm.saveHfToken(token)
-                tokenNote = "Saved"
-            }) { Text("Save token") }
-            tokenNote?.let { Text("  $it", style = MaterialTheme.typography.labelMedium) }
+    Card(Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("Add Custom Offline Model", style = MaterialTheme.typography.titleMedium)
+            Text(
+                "Paste a Hugging Face link like huggingface.co/DuoNeural/Gemma-4-Abliterated-LiteRT",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            OutlinedTextField(
+                value = link,
+                onValueChange = { link = it; error = null },
+                label = { Text("Hugging Face model URL") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth(),
+            )
+            error?.let {
+                Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Button(
+                    onClick = {
+                        val err = vm.addOfflineModel(link)
+                        if (err != null) error = err else link = ""
+                    },
+                    enabled = link.isNotBlank(),
+                ) { Text("Add & Download") }
+            }
         }
     }
+}
+
+object CodespaceSessionManager {
+    const val URL_GITHUB_CODESPACES = "https://github.com/codespaces"
+    const val URL_CHATGPT_CODEX = "https://chatgpt.com/codex"
 }

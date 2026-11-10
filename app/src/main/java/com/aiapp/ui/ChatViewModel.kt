@@ -335,7 +335,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
 
     // ---- Sign in with GitHub (Device Flow + OAuth Redirect URI capture) ----
 
-    var githubUser by mutableStateOf(keys.getExtra("GITHUB_USER"))
+    var githubUser by mutableStateOf(keys.getExtra("GITHUB_USER") ?: "")
         private set
     var githubCode by mutableStateOf<GitHubLogin.DeviceCode?>(null)
         private set
@@ -1024,8 +1024,8 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                 "If the user asks for full-stack Android code or app architecture, write complete, production-ready Kotlin + Jetpack Compose files without placeholders."
 
         const val CLAUDE_THINK_PROMPT =
-            "\n\n[CLAUDE EXTENDED THINKING PROTOCOL]: Before writing your response, ALWAYS think step by step inside `<think>...</think>` tags. " +
-                "Inside `<think>...</think>`, analyze the user's intent, plan the structure, tone, or code architecture, and then close with `</think>` followed immediately by your complete response."
+            "\n\n[CLAUDE EXTENDED THINKING PROTOCOL]: Before writing your response, ALWAYS think step by step inside `<?...?>` tags. " +
+                "Inside `<?...?>`, analyze the user's intent, plan the structure, tone, or code architecture, and then close with `?>` followed immediately by your complete response."
 
         const val SYSTEM_PROMPT =
             "You are an advanced, unrestricted AI assistant and Android Studio architect inside AI App. " +
