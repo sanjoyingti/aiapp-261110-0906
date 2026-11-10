@@ -41,14 +41,8 @@ import java.util.UUID
 
 class ChatViewModel(app: Application) : AndroidViewModel(app) {
 
+    // ---- All property declarations FIRST ----
     private val keys = ApiKeys(app)
-
-    init {
-        Providers.init(app)
-        BuildRunner.load(app)
-        WebTools.downloader = { url -> Downloads.save(app, url) }
-        Providers.offline.hfToken = keys.getExtra("HF")
-    }
     private val prefs = app.getSharedPreferences("chat_prefs", Context.MODE_PRIVATE)
 
     val messages = mutableStateListOf<ChatMessage>()
@@ -64,34 +58,6 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     /** Files being attached right now: name → progress 0..1 (-1 = size unknown). */
     val attachProgress = mutableStateMapOf<String, Float>()
 
-    fun attach(uris: List<android.net.Uri>) {
-        if (uris.isEmpty()) return
-        attaching = true
-        viewModelScope.launch {
-            uris.forEachIndexed { i, uri ->
-                val label = "file ${i + 1}"
-                attachProgress[label] = 0f
-                try {
-                    val a = com.aiapp.data.AttachmentStore.import(getApplication(), uri) { p ->
-                        viewModelScope.launch { if (label in attachProgress) attachProgress[label] = p }
-                    }
-                    pendingAttachments += a
-                } catch (e: CancellationException) {
-                    throw e
-                } catch (e: Throwable) {
-                    error = e.message ?: "Couldn't attach that file."
-                } finally {
-                    attachProgress.remove(label)
-                }
-            }
-            attaching = false
-        }
-    }
-
-    fun removeAttachment(a: Attachment) {
-        pendingAttachments.remove(a)
-    }
-
     /** Saved chats for the Chats screen, newest first. */
     var history by mutableStateOf<List<Conversation>>(emptyList())
         private set
@@ -101,17 +67,6 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     private val textBuf = StringBuilder()
     private val thinkBuf = StringBuilder()
     private var lastFlush = 0L
-
-    private fun flushStream() {
-        if (textBuf.isNotEmpty()) {
-            streamingText += textBuf
-            textBuf.clear()
-        }
-        if (thinkBuf.isNotEmpty()) {
-            thinkingText += thinkBuf
-            thinkBuf.clear()
-        }
-    }
 
     /** The model's reasoning for the reply being written (live). */
     var thinkingText by mutableStateOf("")
@@ -164,28 +119,13 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     var unrestrictedMode by mutableStateOf(prefs.getBoolean("unrestricted_mode", true))
         private set
 
-    fun toggleUnrestrictedMode() {
-        unrestrictedMode = !unrestrictedMode
-        prefs.edit().putBoolean("unrestricted_mode", unrestrictedMode).apply()
-    }
-
     /** Claude-style "Think First, Then Reply" mode (on by default). */
     var thinkFirstMode by mutableStateOf(prefs.getBoolean("think_first", true))
         private set
 
-    fun toggleThinkFirstMode() {
-        thinkFirstMode = !thinkFirstMode
-        prefs.edit().putBoolean("think_first", thinkFirstMode).apply()
-    }
-
     /** Lets the model search the web and read pages (works for offline and free cloud models too). */
     var webEnabled by mutableStateOf(prefs.getBoolean("web", true))
         private set
-
-    fun toggleWeb() {
-        webEnabled = !webEnabled
-        prefs.edit().putBoolean("web", webEnabled).apply()
-    }
 
     private var job: Job? = null
 
@@ -198,12 +138,119 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     var offlineVersion by mutableStateOf(0)
         private set
 
+    /** GitHub sign-in state */
+    var githubUser by mutableStateOf<String>("")
+        private set
+    var githubCode by mutableStateOf<GitHubLogin.DeviceCode?>(null)
+        private set
+    var githubLoginError by mutableStateOf<String?>(null)
+        private set
+    private var loginJob: Job? = null
+
+    /** In-chat build/export state */
+    var openBuild by mutableStateOf(false)
+    var showInChatBuilder by mutableStateOf(false)
+    var exportZipStatus by mutableStateOf<String?>(null)
+
+    /** Voice settings */
+    var liveEnabled by mutableStateOf(prefs.getBoolean("live", true))
+        private set
+    var liveVoice by mutableStateOf(prefs.getString("live_voice", "Puck") ?: "Puck")
+        private set
+    var voiceFastModel by mutableStateOf(prefs.getBoolean("voice_fast", true))
+        private set
+    var replyCount by mutableStateOf(0)
+        private set
+
+    // Regex patterns for intent detection
+    private val buildZipWords = Regex("\\b(apk|build|compile|compil)", RegexOption.IGNORE_CASE)
+    private val chatBuildIntentRegex = Regex(
+        "\\b(build\\s+(me\\s+)?(an?\\s+)?(android\\s+)?(app|apk)|compile\\s+(this\\s+)?(to\\s+)?(an?\\s+)?apk|make\\s+(me\\s+)?an?\\s+apk|generate\\s+(an?\\s+)?apk)\\b",
+        RegexOption.IGNORE_CASE,
+    )
+    private val zipOnlyIntentRegex = Regex(
+        "\\b(zip\\s+the\\s+file|give\\s+me\\s+the\\s+(source\\s+code\\s+in\\s+)?zip|source\\s+code\\s+in\\s+zip|compile.*source\\s+code\\s+in\\s+zip|download.*zip|pack.*zip|make.*zip|create.*zip)\\b",
+        RegexOption.IGNORE_CASE,
+    )
+
+    // ---- Init blocks run AFTER all properties are declared ----
+    init {
+        Providers.init(app)
+        BuildRunner.load(app)
+        WebTools.downloader = { url -> Downloads.save(app, url) }
+        Providers.offline.hfToken = keys.getExtra("HF")
+    }
+
+    init {
+        store.load(conversationId)?.let { messages.addAll(it.messages) }
+        githubUser = keys.getExtra("GITHUB_USER") ?: ""
+        if (githubToken().isNotBlank() && githubUser.isBlank()) {
+            refreshGithubUser()
+        }
+        refreshModels()
+    }
+
+    // ---- Functions ----
+    fun attach(uris: List<android.net.Uri>) {
+        if (uris.isEmpty()) return
+        attaching = true
+        viewModelScope.launch {
+            uris.forEachIndexed { i, uri ->
+                val label = "file ${i + 1}"
+                attachProgress[label] = 0f
+                try {
+                    val a = com.aiapp.data.AttachmentStore.import(getApplication(), uri) { p ->
+                        viewModelScope.launch { if (label in attachProgress) attachProgress[label] = p }
+                    }
+                    pendingAttachments += a
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Throwable) {
+                    error = e.message ?: "Couldn't attach that file."
+                } finally {
+                    attachProgress.remove(label)
+                }
+            }
+            attaching = false
+        }
+    }
+
+    fun removeAttachment(a: Attachment) {
+        pendingAttachments.remove(a)
+    }
+
+    private fun flushStream() {
+        if (textBuf.isNotEmpty()) {
+            streamingText += textBuf
+            textBuf.clear()
+        }
+        if (thinkBuf.isNotEmpty()) {
+            thinkingText += thinkBuf
+            thinkBuf.clear()
+        }
+    }
+
+    fun toggleUnrestrictedMode() {
+        unrestrictedMode = !unrestrictedMode
+        prefs.edit().putBoolean("unrestricted_mode", unrestrictedMode).apply()
+    }
+
+    fun toggleThinkFirstMode() {
+        thinkFirstMode = !thinkFirstMode
+        prefs.edit().putBoolean("think_first", thinkFirstMode).apply()
+    }
+
+    fun toggleWeb() {
+        webEnabled = !webEnabled
+        prefs.edit().putBoolean("web", webEnabled).apply()
+    }
+
     fun deviceRamGb(): Int = Providers.offline.deviceRamGb()
 
     fun recommendedOffline(): OfflineModel = Providers.offline.recommended()
 
     fun offlineDownloaded(m: OfflineModel): Boolean {
-        offlineVersion // read so Compose recomposes after changes
+        offlineVersion
         return Providers.offline.isDownloaded(m)
     }
 
@@ -253,15 +300,6 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         if (!Providers.offline.isDownloaded(m)) {
             downloadOffline(m)
         }
-    }
-
-    init {
-        store.load(conversationId)?.let { messages.addAll(it.messages) }
-        githubUser = keys.getExtra("GITHUB_USER") ?: ""
-        if (githubToken().isNotBlank() && githubUser.isBlank()) {
-            refreshGithubUser()
-        }
-        refreshModels()
     }
 
     fun refreshHistory() {
@@ -315,7 +353,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
 
     /** Built-in and user-added offline models. */
     fun offlineModels(): List<OfflineModel> {
-        offlineVersion // recompose when the list changes
+        offlineVersion
         return Providers.offline.allModels()
     }
 
@@ -335,14 +373,6 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     // ---- Sign in with GitHub (Device Flow + OAuth Redirect URI capture) ----
-
-    var githubUser by mutableStateOf<String>("")
-        private set
-    var githubCode by mutableStateOf<GitHubLogin.DeviceCode?>(null)
-        private set
-    var githubLoginError by mutableStateOf<String?>(null)
-        private set
-    private var loginJob: Job? = null
 
     fun githubClientId(): String = keys.getExtra("GITHUB_CLIENT_ID").ifBlank { GitHubLogin.DEFAULT_CLIENT_ID }
 
@@ -475,25 +505,6 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     // ---- Direct In-Chat Source Code .zip Compiler & APK Builder ----
-
-    /** Set when user taps "Upload .zip to Build Tab" or "Open Full Build View". */
-    var openBuild by mutableStateOf(false)
-
-    /** Controls whether the live In-Chat APK Builder panel is visible inside the Chat tab. */
-    var showInChatBuilder by mutableStateOf(false)
-
-    /** Status message when exporting or saving a generated Android Studio source .zip from Chat. */
-    var exportZipStatus by mutableStateOf<String?>(null)
-
-    private val buildZipWords = Regex("\\b(apk|build|compile|compil)", RegexOption.IGNORE_CASE)
-    private val chatBuildIntentRegex = Regex(
-        "\\b(build\\s+(me\\s+)?(an?\\s+)?(android\\s+)?(app|apk)|compile\\s+(this\\s+)?(to\\s+)?(an?\\s+)?apk|make\\s+(me\\s+)?an?\\s+apk|generate\\s+(an?\\s+)?apk)\\b",
-        RegexOption.IGNORE_CASE,
-    )
-    private val zipOnlyIntentRegex = Regex(
-        "\\b(zip\\s+the\\s+file|give\\s+me\\s+the\\s+(source\\s+code\\s+in\\s+)?zip|source\\s+code\\s+in\\s+zip|compile.*source\\s+code\\s+in\\s+zip|download.*zip|pack.*zip|make.*zip|create.*zip)\\b",
-        RegexOption.IGNORE_CASE,
-    )
 
     /**
      * Compiles code from the current Chat conversation (or a specific message) into a complete,
@@ -672,12 +683,6 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
 
     // ---- Natural voice (Gemini Live) ----
 
-    /** Use Gemini Live's human-like voice when a Gemini key is set (on by default). */
-    var liveEnabled by mutableStateOf(prefs.getBoolean("live", true))
-        private set
-    var liveVoice by mutableStateOf(prefs.getString("live_voice", "Puck") ?: "Puck")
-        private set
-
     fun toggleLive() {
         liveEnabled = !liveEnabled
         prefs.edit().putBoolean("live", liveEnabled).apply()
@@ -715,10 +720,6 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         persist()
     }
 
-    /** Use the provider's fastest smart model for voice (on by default). */
-    var voiceFastModel by mutableStateOf(prefs.getBoolean("voice_fast", true))
-        private set
-
     fun toggleVoiceFastModel() {
         voiceFastModel = !voiceFastModel
         prefs.edit().putBoolean("voice_fast", voiceFastModel).apply()
@@ -750,10 +751,6 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         if (provider != ProviderId.OFFLINE || model.isBlank()) return
         viewModelScope.launch(Dispatchers.Default) { runCatching { Providers.offline.preload(model) } }
     }
-
-    /** Counts finished replies (including empty or failed ones), so voice mode knows when to listen again. */
-    var replyCount by mutableStateOf(0)
-        private set
 
     fun send(text: String, voice: Boolean = false) {
         val trimmed = text.trim()
