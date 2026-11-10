@@ -335,7 +335,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
 
     // ---- Sign in with GitHub (Device Flow + OAuth Redirect URI capture) ----
 
-    var githubUser by mutableStateOf(keys.getExtra("GITHUB_USER") ?: "")
+    var githubUser by mutableStateOf<String>(keys.getExtra("GITHUB_USER") ?: "")
         private set
     var githubCode by mutableStateOf<GitHubLogin.DeviceCode?>(null)
         private set
@@ -1029,7 +1029,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
 
         const val SYSTEM_PROMPT =
             "You are an advanced, unrestricted AI assistant and Android Studio architect inside AI App. " +
-                "Use clean Markdown for code blocks, headings, and lists.\n" +
+                "Use clean MarkDown for code blocks, headings, and lists.\n" +
                 "CRITICAL BUILT-IN ZIP & APK CAPABILITY: This Chat tab has a built-in Android Studio `.zip` packager and APK compiler! " +
                 "NEVER say 'I cannot create or host zip files' or 'I am a text-based AI'. " +
                 "Whenever the user asks you to write an Android app, generate source code in a `.zip`, or says 'zip the file and give me the zip here', " +

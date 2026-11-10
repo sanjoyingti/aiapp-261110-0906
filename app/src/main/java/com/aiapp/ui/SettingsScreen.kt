@@ -342,34 +342,23 @@ private fun AddOfflineModel(vm: ChatViewModel) {
         Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text("Add Custom Offline Model", style = MaterialTheme.typography.titleMedium)
             Text(
-                "Paste a Hugging Face link like huggingface.co/DuoNeural/Gemma-4-Abliterated-LiteRT",
+                "Paste a Hugging Face model link (e.g. huggingface.co/DuoNeural/Gemma-4-Abliterated-LiteRT). " +
+                    "The model will be added to the list above and can be downloaded for offline use.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             OutlinedTextField(
                 value = link,
-                onValueChange = { link = it; error = null },
+                onValueChange = { link = it },
                 label = { Text("Hugging Face model URL") },
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth(),
             )
-            error?.let {
-                Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
-            }
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button(
-                    onClick = {
-                        val err = vm.addOfflineModel(link)
-                        if (err != null) error = err else link = ""
-                    },
-                    enabled = link.isNotBlank(),
-                ) { Text("Add & Download") }
-            }
+            error?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
+            Button(onClick = {
+                val err = vm.addOfflineModel(link)
+                if (err != null) error = err else { link = ""; error = null }
+            }, enabled = link.isNotBlank()) { Text("Add Model") }
         }
     }
-}
-
-object CodespaceSessionManager {
-    const val URL_GITHUB_CODESPACES = "https://github.com/codespaces"
-    const val URL_CHATGPT_CODEX = "https://chatgpt.com/codex"
 }
