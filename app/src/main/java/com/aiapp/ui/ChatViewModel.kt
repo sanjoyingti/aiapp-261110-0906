@@ -257,6 +257,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
 
     init {
         store.load(conversationId)?.let { messages.addAll(it.messages) }
+        githubUser = keys.getExtra("GITHUB_USER") ?: ""
         if (githubToken().isNotBlank() && githubUser.isBlank()) {
             refreshGithubUser()
         }
@@ -335,7 +336,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
 
     // ---- Sign in with GitHub (Device Flow + OAuth Redirect URI capture) ----
 
-    var githubUser by mutableStateOf<String>(keys.getExtra("GITHUB_USER") ?: "")
+    var githubUser by mutableStateOf<String>("")
         private set
     var githubCode by mutableStateOf<GitHubLogin.DeviceCode?>(null)
         private set
