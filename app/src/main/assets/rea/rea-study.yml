@@ -1,0 +1,66 @@
+name: REA study
+on: push
+permissions:
+  contents: write
+jobs:
+  study:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+      - name: Install REA (github.com/morluto/rea)
+        run: |
+          npm install --global rea-agents@6.8.0 || npm install --global rea-agents
+          rea --version
+      - name: Study the APK with REA
+        if: ${{ hashFiles('app.apk') != '' }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/rea"
+          JAR="$RUNNER_TEMP/rea/jadx-headless-mcp-0.7.1-all.jar"
+          curl -fsSL -o "$JAR" https://github.com/1013503897/jadx-headless-mcp/releases/download/v0.7.1/jadx-headless-mcp-0.7.1-all.jar
+          echo "6e5eacf500b64292bfb73c49797c1958f6ee44646e43e868039ae7feb573ff75  $JAR" | sha256sum -c -
+          export REA_JADX_MCP_JAR="$JAR"
+          python3 rea_study.py apk "$PWD/app.apk" evidence
+      - name: Map the network (servers, endpoints, keys) from the decompiled APK
+        if: ${{ hashFiles('app.apk') != '' }}
+        run: |
+          set +e
+          FALLBACK=https://github.com/skylot/jadx/releases/download/v1.5.3/jadx-1.5.3.zip
+          URL=$(curl -sSL -H "Authorization: Bearer ${{ github.token }}" https://api.github.com/repos/skylot/jadx/releases/latest | grep -oE 'https://[^"]*/jadx-[0-9][0-9.]*\.zip' | head -n 1)
+          [ -z "$URL" ] && URL=$FALLBACK
+          curl -fsSL -o jadx.zip "$URL" || curl -fsSL -o jadx.zip "$FALLBACK"
+          unzip -q jadx.zip -d jadx && chmod +x jadx/bin/jadx
+          export JAVA_OPTS="-Xmx6g"
+          timeout 900 ./jadx/bin/jadx --no-res --no-imports -j 4 -d src app.apk > jadx-net.log 2>&1
+          PKG=$(python3 -c "import json;print(json.load(open('evidence/raw/inspect-android-package.json'))['normalized_result'].get('package_name') or '')" 2>/dev/null)
+          echo "" >> evidence/rea-evidence.md
+          if [ -d src ]; then
+            python3 netmap.py src "$PKG" >> evidence/rea-evidence.md || echo "- (network map step failed)" >> evidence/rea-evidence.md
+          else
+            printf '## Network, servers and secrets\n- Could not decompile the APK for the network map (jadx produced no output).\n' >> evidence/rea-evidence.md
+          fi
+      - name: Study the website with REA
+        if: ${{ hashFiles('target.txt') != '' }}
+        run: |
+          URL=$(head -n 1 target.txt | tr -d '\r\n')
+          CHROME=$(command -v google-chrome || command -v chromium-browser || command -v chromium)
+          "$CHROME" --headless=new --no-sandbox --disable-gpu --password-store=basic --remote-debugging-port=9222 \
+            --user-data-dir="$RUNNER_TEMP/rea-profile" --window-size=1280,900 "$URL" > "$RUNNER_TEMP/chrome.log" 2>&1 &
+          for i in $(seq 1 40); do curl -fs http://127.0.0.1:9222/json/version > /dev/null && break; sleep 1; done
+          sleep 8
+          python3 rea_study.py web "$URL" evidence
+      - name: Save the evidence in this repository
+        run: |
+          test -f evidence/rea-evidence.md
+          git config user.name "AI App"
+          git config user.email "ai-app@users.noreply.github.com"
+          git add evidence
+          git commit -q -m "REA evidence"
+          git push -q
